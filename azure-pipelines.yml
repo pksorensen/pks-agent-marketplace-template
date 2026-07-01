@@ -1,0 +1,57 @@
+# Azure DevOps pipeline — deploy the Skills Marketplace to Azure Container Apps.
+#
+# Two stages, demo → prod. Each stage runs `aspire deploy -e <name>` and links a
+# variable group of the same name that supplies the AppHost parameters + Azure
+# target. Prod only deploys after demo succeeds; gate prod with an approval on
+# its ADO Environment (marketplace-prod).
+#
+# ── One-time setup ───────────────────────────────────────────────────────────
+# 1. Create two ARM service connections named `marketplace-demo` and
+#    `marketplace-prod` (Project settings → Service connections).
+# 2. Create two variable groups (Pipelines → Library) named exactly
+#    `marketplace-demo` and `marketplace-prod`, each containing:
+#
+#      Azure target:
+#        AzureSubscriptionId, AzureTenantId, AzureLocation, AzureResourceGroup
+#      Secrets (mark as secret 🔒):
+#        registry-password, nextauth-secret, entra-client-secret
+#      Plain:
+#        registry-username, entra-client-id
+#
+#    (Swap the entra-* keys for oidc-* / smtp-pass if you use a different auth
+#     method — keep them in sync with .azuredevops/templates/deploy-aspire.yml.)
+# 3. Create two ADO Environments (Pipelines → Environments): `marketplace-demo`
+#    and `marketplace-prod`; add a required approval on `marketplace-prod`.
+
+name: $(Date:yyyyMMdd).$(Rev:r)
+
+trigger:
+  branches:
+    include:
+      - main
+
+pr: none
+
+variables:
+  - name: dotnetVersion
+    value: "10.0.x"
+  - name: appHostPath
+    value: "src/MarketplaceHost/MarketplaceHost.csproj"
+
+stages:
+  - template: .azuredevops/templates/deploy-aspire.yml
+    parameters:
+      stageName: Demo
+      aspireEnv: demo
+      variableGroup: marketplace-demo
+      adoEnvironment: marketplace-demo
+      serviceConnection: marketplace-demo
+
+  - template: .azuredevops/templates/deploy-aspire.yml
+    parameters:
+      stageName: Prod
+      aspireEnv: prod
+      variableGroup: marketplace-prod
+      adoEnvironment: marketplace-prod
+      serviceConnection: marketplace-prod
+      dependsOn: [Demo]

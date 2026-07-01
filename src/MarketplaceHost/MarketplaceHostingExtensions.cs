@@ -62,9 +62,15 @@ public static class MarketplaceHostingExtensions
             // :latest never runs stale — always re-pull the manifest on start.
             .WithImagePullPolicy(ImagePullPolicy.Always)
             .WithHttpEndpoint(port: ContainerPort, targetPort: ContainerPort, name: "http")
-            .WithVolume("marketplace-data", "/app/user-data")
             .WithEnvironment("PORT", ContainerPort.ToString())
             .WithEnvironment("AUTH_TRUST_HOST", cfg["Marketplace:AuthTrustHost"] ?? "true");
+
+        // Local run: persist /app/user-data to a named Docker volume across restarts.
+        // In the cloud (publish mode) a Docker volume is meaningless — Container Apps
+        // persistence needs an Azure Files share (see README). Kept ephemeral here so
+        // the template deploys with zero extra infra; wire a share when you need it.
+        if (!builder.ExecutionContext.IsPublishMode)
+            mkt.WithVolume("marketplace-data", "/app/user-data");
 
         // Runtime + branding — forwarded only when set (empty values are skipped so
         // the container's own defaults stand).
@@ -103,7 +109,36 @@ public static class MarketplaceHostingExtensions
                 ctx.EnvironmentVariables["NEXTAUTH_SECRET"] = s;
         });
 
+        // ── Cloud target (aspire deploy / aspire publish) ───────────────────
+        // Turn the container into a public Azure Container App. This branch is
+        // inert during local `aspire run`. The pipeline (azure-pipelines.yml /
+        // .github/workflows/azure-deploy.yml) supplies the Azure__* target and
+        // Parameters__* secrets per environment.
+        if (builder.ExecutionContext.IsPublishMode)
+            PublishAsContainerApp(builder, mkt);
+
         return mkt;
+    }
+
+    /// <summary>Wire the Azure Container Apps environment + public ingress for the marketplace.</summary>
+    private static void PublishAsContainerApp(
+        IDistributedApplicationBuilder builder, IResourceBuilder<ContainerResource> mkt)
+    {
+        // Per-environment suffix (demo/prod) keeps globally-scoped names from
+        // colliding when the same subscription hosts several environments.
+        var env = builder.Configuration["AzureEnvironment"] ?? "demo";
+
+        var logAnalytics = builder.AddAzureLogAnalyticsWorkspace("log-analytics");
+        builder.AddAzureContainerAppEnvironment($"cae-marketplace-{env}")
+            .WithAzureLogAnalyticsWorkspace(logAnalytics);
+
+        mkt.PublishAsAzureContainerApp((infra, app) =>
+        {
+            app.Configuration.Ingress.External = true;
+            app.Configuration.Ingress.TargetPort = ContainerPort;
+            app.Template.Scale.MinReplicas = 1;
+            app.Template.Scale.MaxReplicas = 1;
+        });
     }
 
     // ── Authentication providers ────────────────────────────────────────────

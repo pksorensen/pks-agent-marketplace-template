@@ -1,0 +1,45 @@
+# Deploy the Skills Marketplace to Azure Container Apps — demo → prod.
+#
+# Two jobs call the reusable _deploy-aspire.yml, one per environment. `prod` only
+# runs after `demo` succeeds; gate it with a required reviewer on the GitHub
+# `prod` Environment so a human approves the production rollout.
+#
+# ── One-time setup ───────────────────────────────────────────────────────────
+# 1. App registration + federated credentials (OIDC, no client secret):
+#      az ad app create --display-name marketplace-deployer
+#    Add one federated credential per environment, subject:
+#      repo:<owner>/<repo>:environment:demo
+#      repo:<owner>/<repo>:environment:prod
+#    Grant the app's service principal Contributor on the target resource group(s).
+# 2. Create two GitHub Environments (Settings → Environments): `demo`, `prod`;
+#    add a required reviewer on `prod`.
+# 3. Per environment, add:
+#      Secrets:
+#        AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
+#        REGISTRY_USERNAME, REGISTRY_PASSWORD, NEXTAUTH_SECRET
+#        ENTRA_CLIENT_ID, ENTRA_CLIENT_SECRET
+#      Variables:
+#        AZURE_LOCATION (e.g. westeurope), AZURE_RESOURCE_GROUP
+
+name: azure-deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  demo:
+    uses: ./.github/workflows/_deploy-aspire.yml
+    with:
+      environment: demo
+      aspire-env: demo
+    secrets: inherit
+
+  prod:
+    needs: demo
+    uses: ./.github/workflows/_deploy-aspire.yml
+    with:
+      environment: prod
+      aspire-env: prod
+    secrets: inherit

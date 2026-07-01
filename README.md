@@ -113,9 +113,42 @@ The container's `/app/user-data` (catalog, orgs, sessions, settings) is mounted
 to a named Docker volume `marketplace-data`, so it survives restarts. Remove it
 with `docker volume rm marketplace-data` for a clean slate.
 
-## Publishing to the cloud
+## Deploying to Azure (CI/CD)
 
-`aspire run` is for local/self-hosted deployment. To generate deployment
-artifacts (e.g. a Docker Compose file or Azure resources) use `aspire publish` —
-the same configuration applies. See the
-[Aspire deployment docs](https://learn.microsoft.com/dotnet/aspire/deployment/).
+The template ships a two-stage **demo → prod** pipeline in both flavors — pick one:
+
+- **Azure DevOps** — [`azure-pipelines.yml`](azure-pipelines.yml) + the reusable
+  stage in [`.azuredevops/templates/deploy-aspire.yml`](.azuredevops/templates/deploy-aspire.yml)
+- **GitHub Actions** — [`.github/workflows/azure-deploy.yml`](.github/workflows/azure-deploy.yml)
+  + the reusable [`_deploy-aspire.yml`](.github/workflows/_deploy-aspire.yml)
+
+Both run `aspire deploy` (which provisions an **Azure Container Apps** environment
+and deploys the marketplace image to it) once per environment. `prod` only runs
+after `demo` succeeds, and is meant to sit behind a manual approval:
+
+- **Azure DevOps** — a required check on the `marketplace-prod` *Environment*.
+- **GitHub** — a required reviewer on the `prod` *Environment*.
+
+Each environment supplies its own Azure target + secrets, so `demo` and `prod`
+land in separate resource groups / subscriptions with independent auth config.
+The one-time setup (service connection / OIDC federated credentials, variable
+groups or environment secrets, and the exact key list) is documented in the
+header comment of each pipeline file.
+
+> **Auth for public environments:** the default `AppHost.cs` uses `.AddUnsecured()`,
+> which auto-signs-in *anyone* as admin — fine locally, **never** for a public
+> demo/prod. Switch to `.AddAzureEntraID()` (or `.AddOIDC()` / `.AddMagicLink()`)
+> and set that provider's secrets in the environment before deploying. A random
+> `nextauth-secret` is required for every non-unsecured deployment.
+
+> **Persistence:** the deployed container runs with an ephemeral `/app/user-data`
+> (no Docker volume in the cloud). For durable catalog/session storage, mount an
+> Azure Files share to the Container App — left out of the template so it deploys
+> with zero extra infra.
+
+To inspect the generated Bicep without deploying:
+
+```bash
+DOTNET_ASPIRE_ENABLE_DEPLOY_COMMAND=true \
+  aspire publish -e demo --project src/MarketplaceHost/MarketplaceHost.csproj --output-path ./out
+```

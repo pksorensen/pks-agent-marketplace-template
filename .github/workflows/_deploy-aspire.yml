@@ -1,0 +1,87 @@
+# Reusable workflow: `aspire deploy -e <aspire-env>` against one environment.
+# Called by azure-deploy.yml once per environment (demo, prod). Mirrors the ADO
+# stage template in .azuredevops/templates/deploy-aspire.yml.
+#
+# Auth to Azure uses OpenID Connect (no stored client secret) — configure a
+# federated credential on the app registration for each GitHub Environment.
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: GitHub Environment (holds the approval rules + secrets).
+        required: true
+        type: string
+      aspire-env:
+        description: Aspire deploy environment name (demo / prod).
+        required: true
+        type: string
+
+permissions:
+  id-token: write # OIDC token for azure/login
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      DOTNET_ASPIRE_ENABLE_DEPLOY_COMMAND: "true"
+      DOTNET_NOLOGO: "true"
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Install Aspire CLI
+        run: |
+          set -euo pipefail
+          curl -sSL https://aspire.dev/install.sh | bash
+          echo "$HOME/.aspire/bin" >> "$GITHUB_PATH"
+
+      - name: Tool versions
+        run: |
+          set -euo pipefail
+          aspire --version
+          dotnet --info
+          docker version
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: aspire deploy -e ${{ inputs.aspire-env }}
+        run: |
+          set -euo pipefail
+          az account set --subscription "$Azure__SubscriptionId"
+          aspire deploy -e "${{ inputs.aspire-env }}" --project src/MarketplaceHost/MarketplaceHost.csproj
+        env:
+          # --- AppHost parameters (builder.AddParameter) ------------------------
+          Parameters__registry-username: ${{ secrets.REGISTRY_USERNAME }}
+          Parameters__registry-password: ${{ secrets.REGISTRY_PASSWORD }}
+          Parameters__nextauth-secret: ${{ secrets.NEXTAUTH_SECRET }}
+          # Microsoft Entra ID (.AddAzureEntraID). Swap for oidc-*/smtp-pass if you
+          # use a different auth method — keep in sync with AppHost.cs.
+          Parameters__entra-client-id: ${{ secrets.ENTRA_CLIENT_ID }}
+          Parameters__entra-client-secret: ${{ secrets.ENTRA_CLIENT_SECRET }}
+          # Parameters__oidc-client-id: ${{ secrets.OIDC_CLIENT_ID }}
+          # Parameters__oidc-client-secret: ${{ secrets.OIDC_CLIENT_SECRET }}
+          # Parameters__smtp-pass: ${{ secrets.SMTP_PASS }}
+
+          # --- Azure target -----------------------------------------------------
+          Azure__SubscriptionId: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          Azure__TenantId: ${{ secrets.AZURE_TENANT_ID }}
+          Azure__Location: ${{ vars.AZURE_LOCATION }}
+          Azure__ResourceGroup: ${{ vars.AZURE_RESOURCE_GROUP }}
+          Azure__AllowResourceGroupCreation: "true"
+
+          # Deploy-target name — read in AppHost.cs to suffix Azure resource names.
+          AzureEnvironment: ${{ inputs.aspire-env }}

@@ -1,0 +1,119 @@
+# Reusable stage: `aspire deploy -e <aspireEnv>` against one environment.
+#
+# Every value comes from the linked variable group and is mapped into env vars
+# that Aspire reads via IConfiguration:
+#   - Parameters__<Name>   answer the AppHost's builder.AddParameter(...) calls
+#   - Azure__<Key>         the Azure target (subscription / RG / location / tenant)
+#
+# The Parameters__* list below must mirror whichever auth method AppHost.cs
+# enables (.AddAzureEntraID / .AddOIDC / .AddMagicLink). Extra ones are ignored,
+# so it's safe to leave the whole set in.
+
+parameters:
+  - name: stageName
+    type: string
+  - name: aspireEnv
+    type: string
+  - name: variableGroup
+    type: string
+  - name: adoEnvironment
+    type: string
+  - name: serviceConnection
+    type: string
+  - name: dependsOn
+    type: object
+    default: []
+  - name: vmImage
+    type: string
+    default: "ubuntu-latest"
+
+stages:
+  - stage: ${{ parameters.stageName }}
+    displayName: Deploy ${{ parameters.aspireEnv }}
+    ${{ if ne(length(parameters.dependsOn), 0) }}:
+      dependsOn: ${{ parameters.dependsOn }}
+    variables:
+      - group: ${{ parameters.variableGroup }}
+      - name: DOTNET_ASPIRE_ENABLE_DEPLOY_COMMAND
+        value: "true"
+      - name: DOTNET_NOLOGO
+        value: "true"
+      - name: DOTNET_CLI_TELEMETRY_OPTOUT
+        value: "1"
+    jobs:
+      - deployment: deploy_${{ parameters.stageName }}
+        displayName: aspire deploy -e ${{ parameters.aspireEnv }}
+        pool:
+          vmImage: ${{ parameters.vmImage }}
+        environment: ${{ parameters.adoEnvironment }}
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  submodules: false
+                  fetchDepth: 0
+
+                - task: UseDotNet@2
+                  displayName: Use .NET SDK
+                  inputs:
+                    packageType: "sdk"
+                    version: $(dotnetVersion) # defined in root pipeline variables
+
+                - bash: |
+                    set -euo pipefail
+                    curl -sSL https://aspire.dev/install.sh | bash
+                    echo "##vso[task.prependpath]$HOME/.aspire/bin"
+                  displayName: Install Aspire CLI
+
+                - bash: |
+                    set -euo pipefail
+                    aspire --version
+                    dotnet --info
+                    docker version
+                  displayName: Tool versions
+
+                - task: AzureCLI@2
+                  displayName: aspire deploy -e ${{ parameters.aspireEnv }}
+                  inputs:
+                    azureSubscription: ${{ parameters.serviceConnection }}
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    addSpnToEnvironment: true
+                    workingDirectory: $(Build.SourcesDirectory)
+                    inlineScript: |
+                      set -euo pipefail
+                      az account set --subscription "$Azure__SubscriptionId"
+
+                      aspire deploy \
+                        -e ${{ parameters.aspireEnv }} \
+                        --project "$(appHostPath)"
+                  env:
+                    # --- AppHost parameters (builder.AddParameter) -----------------------
+                    # Registry pull credentials (blank for a public image).
+                    Parameters__registry-username: $(registry-username)
+                    Parameters__registry-password: $(registry-password)
+                    # Session signing secret — required for every non-unsecured deploy.
+                    Parameters__nextauth-secret: $(nextauth-secret)
+                    # Microsoft Entra ID (.AddAzureEntraID). Comment out if unused.
+                    Parameters__entra-client-id: $(entra-client-id)
+                    Parameters__entra-client-secret: $(entra-client-secret)
+                    # Generic OIDC (.AddOIDC) — uncomment if you use it instead.
+                    # Parameters__oidc-client-id: $(oidc-client-id)
+                    # Parameters__oidc-client-secret: $(oidc-client-secret)
+                    # SMTP magic links (.AddMagicLink) — uncomment if you use it instead.
+                    # Parameters__smtp-pass: $(smtp-pass)
+
+                    # --- Azure target ----------------------------------------------------
+                    Azure__SubscriptionId: $(AzureSubscriptionId)
+                    Azure__TenantId: $(AzureTenantId)
+                    Azure__Location: $(AzureLocation)
+                    Azure__ResourceGroup: $(AzureResourceGroup)
+                    # Allow the pipeline to create the resource group if it doesn't exist:
+                    Azure__AllowResourceGroupCreation: "true"
+
+                    DOTNET_ASPIRE_ENABLE_DEPLOY_COMMAND: $(DOTNET_ASPIRE_ENABLE_DEPLOY_COMMAND)
+
+                    # Deploy-target name (demo/prod) — read in AppHost.cs to suffix
+                    # per-environment Azure resource names.
+                    AzureEnvironment: ${{ parameters.aspireEnv }}

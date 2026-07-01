@@ -16,4 +16,11 @@
     <None Update="appsettings.Development.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Publish-mode only: turns the container into an Azure Container App during
+         `aspire deploy`/`aspire publish`. No effect on local `aspire run`. -->
+    <PackageReference Include="Aspire.Hosting.Azure.AppContainers" Version="13.4.2" />
+    <PackageReference Include="Aspire.Hosting.Azure.OperationalInsights" Version="13.4.2" />
+  </ItemGroup>
+
 </Project>
