@@ -1,0 +1,16 @@
+# .NET build output
+bin/
+obj/
+[Bb]in/
+[Oo]bj/
+
+# Aspire / DCP
+.aspire/
+*.user
+
+# User secrets are stored outside the repo (~/.microsoft/usersecrets) — never here.
+
+# IDE
+.vs/
+.idea/
+*.suo

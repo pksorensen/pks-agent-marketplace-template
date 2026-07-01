@@ -1,0 +1,19 @@
+<Project Sdk="Aspire.AppHost.Sdk/13.4.2">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsAspireHost>true</IsAspireHost>
+    <!-- Stable per-user secret vault: `dotnet user-secrets set Parameters:registry-password <pw>` -->
+    <UserSecretsId>pks-agent-marketplace-template</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Copy config next to the built AppHost so `aspire run` picks it up. -->
+    <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="appsettings.Development.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
